@@ -1,0 +1,43 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+
+spring:
+  application.name: docqa
+  servlet.multipart:
+    max-file-size: 20MB
+    max-request-size: 20MB
+  datasource:
+    # Default: local file-based H2. Docker/Cloud Run override these via env vars.
+    url: ${DB_URL:jdbc:h2:file:./data/docqa;AUTO_SERVER=TRUE}
+    username: ${DB_USER:sa}
+    password: ${DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate.ddl-auto: update
+
+management:
+  endpoints.web.exposure.include: health
+  endpoint.health.probes.enabled: true
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-secret-change-me-dev-only-secret-change-me}
+    expiration-minutes: ${JWT_EXPIRATION_MINUTES:480}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200}
+  rag:
+    provider: ${RAG_PROVIDER:local}   # local | vertex
+    chunk-size: ${RAG_CHUNK_SIZE:1000}
+    chunk-overlap: ${RAG_CHUNK_OVERLAP:150}
+    top-k: ${RAG_TOP_K:5}
+  gcp:
+    project-id: ${GCP_PROJECT_ID:}
+    location: ${GCP_LOCATION:us-central1}
+    embedding-model: ${EMBEDDING_MODEL:text-embedding-005}
+    embedding-dimensions: ${EMBEDDING_DIMENSIONS:768}
+    generation-model: ${GENERATION_MODEL:gemini-2.5-flash}
+    index-id: ${VERTEX_INDEX_ID:}
+    index-endpoint-id: ${VERTEX_INDEX_ENDPOINT_ID:}
+    deployed-index-id: ${VERTEX_DEPLOYED_INDEX_ID:}
+    public-endpoint-domain: ${VERTEX_PUBLIC_ENDPOINT_DOMAIN:}

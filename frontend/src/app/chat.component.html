@@ -1,0 +1,89 @@
+<div class="shell">
+  <aside class="library" (dragover)="$event.preventDefault(); dragging.set(true)" (dragleave)="dragging.set(false)"
+         (drop)="onDrop($event)" [class.dragging]="dragging()">
+    <header>
+      <h1>DocQA</h1>
+      <button class="link" type="button" (click)="auth.logout()" [attr.aria-label]="'Sign out ' + auth.email()">Sign out</button>
+    </header>
+
+    <label class="upload" [class.busy]="uploading()">
+      <input #file type="file" accept=".pdf,.txt,.md" multiple (change)="onFiles(file.files); file.value = ''">
+      <strong>{{ uploading() ? 'Reading your document…' : 'Add documents' }}</strong>
+      <span>PDF, TXT or Markdown, up to 20 MB. Drop files here or click.</span>
+    </label>
+    @if (uploadError()) { <p class="error" role="alert">{{ uploadError() }}</p> }
+
+    <ul class="docs">
+      @for (d of docs(); track d.id) {
+        <li [class.failed]="d.status === 'FAILED'">
+          <div>
+            <span class="name" [title]="d.filename">{{ d.filename }}</span>
+            <small>
+              @if (d.status === 'READY') { {{ d.chunkCount }} passages indexed }
+              @else if (d.status === 'FAILED') { Failed: {{ d.error }} }
+              @else { Processing… }
+            </small>
+          </div>
+          <button class="icon" type="button" (click)="remove(d)" [attr.aria-label]="'Delete ' + d.filename">Delete</button>
+        </li>
+      } @empty {
+        <li class="empty">No documents yet. Add one to start asking questions.</li>
+      }
+    </ul>
+  </aside>
+
+  <main class="chat">
+    <div class="messages" #scroller aria-live="polite">
+      @if (!messages().length) {
+        <div class="intro">
+          <h2>{{ readyCount ? 'Ask anything about your ' + (readyCount === 1 ? 'document' : readyCount + ' documents') : 'Start by adding a document' }}</h2>
+          <p>Answers are written only from your files, and each claim is marked with the passage it came from.</p>
+          @if (readyCount) {
+            <div class="chips">
+              @for (s of suggestions; track s) { <button type="button" (click)="send(s)">{{ s }}</button> }
+            </div>
+          }
+        </div>
+      }
+
+      @for (m of messages(); track $index; let i = $index) {
+        <article class="msg" [class.user]="m.role === 'user'" [class.error]="m.error">
+          <p class="body">
+            @for (p of m.parts; track $index) {
+              @if (p.cite && sourceFor(m, p.cite)) {
+                <button type="button" class="cite" [class.on]="openSource() === i + '-' + p.cite"
+                        (click)="toggleSource(i, p.cite)" [attr.aria-label]="'Show source ' + p.cite">{{ p.cite }}</button>
+              } @else {
+                <span>{{ p.text }}</span>
+              }
+            }
+          </p>
+
+          @if (m.sources.length) {
+            <ol class="sources">
+              @for (s of m.sources; track s.n) {
+                <li [class.open]="openSource() === i + '-' + s.n">
+                  <button type="button" (click)="toggleSource(i, s.n)" [attr.aria-expanded]="openSource() === i + '-' + s.n">
+                    <span class="cite static">{{ s.n }}</span>
+                    <span class="src-name">{{ s.filename }}</span>
+                    @if (s.page) { <span class="src-page">page {{ s.page }}</span> }
+                  </button>
+                  @if (openSource() === i + '-' + s.n) { <blockquote>{{ s.snippet }}</blockquote> }
+                </li>
+              }
+            </ol>
+          }
+        </article>
+      }
+
+      @if (asking()) { <article class="msg"><p class="body thinking">Reading your documents…</p></article> }
+    </div>
+
+    <form class="composer" (ngSubmit)="send()">
+      <textarea name="q" rows="1" [(ngModel)]="question" (keydown.enter)="onEnter($event)" [disabled]="asking()"
+                [placeholder]="readyCount ? 'Ask a question about your documents' : 'Add a document first, then ask a question'"
+                aria-label="Your question" maxlength="1000"></textarea>
+      <button class="primary" type="submit" [disabled]="asking() || !question.trim()">Ask</button>
+    </form>
+  </main>
+</div>

@@ -1,0 +1,88 @@
+name: Deploy to GCP
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # required for Workload Identity Federation (keyless auth)
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+  REPO: docqa                                  # Artifact Registry repository
+  BACKEND_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/docqa/backend
+  FRONTEND_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/docqa/frontend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21, cache: maven }
+      - run: mvn -B verify
+        working-directory: backend
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci && npm run build
+        working-directory: frontend
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push images
+        run: |
+          docker build -t "$BACKEND_IMAGE:${GITHUB_SHA}"  -t "$BACKEND_IMAGE:latest"  backend
+          docker build -t "$FRONTEND_IMAGE:${GITHUB_SHA}" -t "$FRONTEND_IMAGE:latest" frontend
+          docker push --all-tags "$BACKEND_IMAGE"
+          docker push --all-tags "$FRONTEND_IMAGE"
+
+      - name: Deploy backend (Cloud Run)
+        run: |
+          gcloud run deploy docqa-backend \
+            --image "$BACKEND_IMAGE:${GITHUB_SHA}" \
+            --region "$REGION" \
+            --service-account "docqa-runtime@${PROJECT_ID}.iam.gserviceaccount.com" \
+            --allow-unauthenticated \
+            --memory 1Gi --cpu 1 --timeout 300 --min-instances 0 --max-instances 3 \
+            --add-cloudsql-instances "${{ vars.CLOUD_SQL_CONNECTION_NAME }}" \
+            --set-env-vars "RAG_PROVIDER=vertex,GCP_PROJECT_ID=${PROJECT_ID},GCP_LOCATION=${REGION},DB_USER=docqa,DB_URL=jdbc:postgresql:///docqa?cloudSqlInstance=${{ vars.CLOUD_SQL_CONNECTION_NAME }}&socketFactory=com.google.cloud.sql.postgres.SocketFactory,VERTEX_INDEX_ID=${{ vars.VERTEX_INDEX_ID }},VERTEX_INDEX_ENDPOINT_ID=${{ vars.VERTEX_INDEX_ENDPOINT_ID }},VERTEX_DEPLOYED_INDEX_ID=${{ vars.VERTEX_DEPLOYED_INDEX_ID }},VERTEX_PUBLIC_ENDPOINT_DOMAIN=${{ vars.VERTEX_PUBLIC_ENDPOINT_DOMAIN }}" \
+            --set-secrets "JWT_SECRET=docqa-jwt-secret:latest,DB_PASSWORD=docqa-db-password:latest"
+
+      - name: Deploy frontend (Cloud Run)
+        run: |
+          BACKEND_URL=$(gcloud run services describe docqa-backend --region "$REGION" --format 'value(status.url)')
+          gcloud run deploy docqa-frontend \
+            --image "$FRONTEND_IMAGE:${GITHUB_SHA}" \
+            --region "$REGION" \
+            --allow-unauthenticated \
+            --port 8080 --memory 256Mi --max-instances 3 \
+            --set-env-vars "BACKEND_URL=${BACKEND_URL},BACKEND_HOST=${BACKEND_URL#https://}"
+
+      - name: Smoke test
+        run: |
+          BACKEND_URL=$(gcloud run services describe docqa-backend --region "$REGION" --format 'value(status.url)')
+          FRONTEND_URL=$(gcloud run services describe docqa-frontend --region "$REGION" --format 'value(status.url)')
+          curl --fail --retry 5 --retry-delay 5 --retry-all-errors "$BACKEND_URL/actuator/health"
+          curl --fail --retry 5 --retry-delay 5 --retry-all-errors "$FRONTEND_URL/" -o /dev/null
+          echo "Live at $FRONTEND_URL"

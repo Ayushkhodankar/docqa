@@ -1,0 +1,24 @@
+server {
+  listen ${PORT};
+  root /usr/share/nginx/html;
+  index index.html;
+  client_max_body_size 25m;
+
+  # The browser only ever talks to this origin; /api is forwarded to the Spring Boot service (no CORS needed).
+  location /api/ {
+    proxy_pass ${BACKEND_URL};
+    proxy_set_header Host ${BACKEND_HOST};
+    proxy_ssl_server_name on;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+  }
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+
+  location ~* \.(js|css)$ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+  }
+}

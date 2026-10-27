@@ -1,0 +1,46 @@
+# Run everything locally:  docker compose up --build   ->  http://localhost:4200
+# Default is offline "local" RAG mode (no GCP needed). For real Vertex AI, see README.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: docqa
+      POSTGRES_USER: docqa
+      POSTGRES_PASSWORD: docqa
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docqa"]
+      interval: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/docqa
+      DB_USER: docqa
+      DB_PASSWORD: docqa
+      JWT_SECRET: ${JWT_SECRET:-local-dev-secret-local-dev-secret-1234}
+      RAG_PROVIDER: ${RAG_PROVIDER:-local}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-us-central1}
+      VERTEX_INDEX_ID: ${VERTEX_INDEX_ID:-}
+      VERTEX_INDEX_ENDPOINT_ID: ${VERTEX_INDEX_ENDPOINT_ID:-}
+      VERTEX_DEPLOYED_INDEX_ID: ${VERTEX_DEPLOYED_INDEX_ID:-}
+      VERTEX_PUBLIC_ENDPOINT_DOMAIN: ${VERTEX_PUBLIC_ENDPOINT_DOMAIN:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/adc.json
+    volumes:
+      # For RAG_PROVIDER=vertex: run `gcloud auth application-default login`, then point GOOGLE_ADC_FILE at the json it writes
+      - ${GOOGLE_ADC_FILE:-./.empty-adc.json}:/secrets/adc.json:ro
+
+  frontend:
+    build: ./frontend
+    depends_on: [backend]
+    environment:
+      BACKEND_URL: http://backend:8080
+      BACKEND_HOST: backend
+    ports: ["4200:8080"]
+
+volumes:
+  pgdata:
